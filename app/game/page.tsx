@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { db } from '@/lib/firebase';
 import {
   collection,
@@ -34,7 +34,7 @@ const COLORS = [
   '#52B788',
 ];
 
-export default function GamePage() {
+function GameContent() {
   const searchParams = useSearchParams();
   const roomId = searchParams.get('room') || 'default-room';
 
@@ -133,5 +133,13 @@ export default function GamePage() {
         ))}
       </div>
     </div>
+  );
+}
+
+export default function GamePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">Loading game...</div>}>
+      <GameContent />
+    </Suspense>
   );
 }
