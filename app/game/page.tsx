@@ -66,9 +66,12 @@ function GameContent() {
   const roomId = searchParams.get('room') || 'default-room';
 
   const [players, setPlayers] = useState<Record<string, Player>>({});
-  const [playerId] = useState(() => `player-${Math.random().toString(36).substr(2, 9)}`);
-  const [playerEmoji] = useState(() => EMOJIS[Math.floor(Math.random() * EMOJIS.length)]);
-  const [playerColor] = useState(() => COLORS[Math.floor(Math.random() * COLORS.length)]);
+  const [isClient, setIsClient] = useState(false);
+
+  // Use refs for player identity to avoid hydration issues
+  const playerIdRef = useRef<string>('');
+  const playerEmojiRef = useRef<string>('');
+  const playerColorRef = useRef<string>('');
 
   const playerRef = useRef({
     x: 100,
@@ -85,8 +88,41 @@ function GameContent() {
 
   const gameLoopRef = useRef<number>();
   const lastUpdateRef = useRef<number>(Date.now());
+  const lastFirebaseUpdateRef = useRef<number>(Date.now());
+
+  // Initialize on client side only
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      playerIdRef.current = `player-${Math.random().toString(36).substr(2, 9)}`;
+      playerEmojiRef.current = EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+      playerColorRef.current = COLORS[Math.floor(Math.random() * COLORS.length)];
+      setIsClient(true);
+    }
+  }, []);
+
+  // Add player to Firebase immediately when initialized
+  useEffect(() => {
+    if (!isClient || !playerIdRef.current) return;
+
+    const initializePlayer = async () => {
+      await setDoc(
+        doc(db, 'rooms', roomId, 'players', playerIdRef.current),
+        {
+          x: playerRef.current.x,
+          y: playerRef.current.y,
+          color: playerColorRef.current,
+          emoji: playerEmojiRef.current,
+          velocityY: 0,
+        }
+      );
+    };
+
+    initializePlayer();
+  }, [isClient, roomId]);
 
   useEffect(() => {
+    if (!isClient) return;
+
     // Listen to real-time updates from Firebase
     const unsubscribe = onSnapshot(
       collection(db, 'rooms', roomId, 'players'),
@@ -100,7 +136,7 @@ function GameContent() {
     );
 
     return () => unsubscribe();
-  }, [roomId]);
+  }, [roomId, isClient]);
 
   // Collision detection
   const checkCollision = (x: number, y: number, velocityY: number): { collided: boolean; platform: Platform | null } => {
@@ -123,14 +159,16 @@ function GameContent() {
 
   // Update player position in Firebase
   const updatePlayerPosition = async (x: number, y: number, velocityY: number) => {
+    if (!playerIdRef.current) return;
+
     try {
       await setDoc(
-        doc(db, 'rooms', roomId, 'players', playerId),
+        doc(db, 'rooms', roomId, 'players', playerIdRef.current),
         {
           x,
           y,
-          color: playerColor,
-          emoji: playerEmoji,
+          color: playerColorRef.current,
+          emoji: playerEmojiRef.current,
           velocityY,
         }
       );
@@ -141,6 +179,8 @@ function GameContent() {
 
   // Game loop
   useEffect(() => {
+    if (!isClient) return;
+
     const gameLoop = () => {
       const now = Date.now();
       const deltaTime = now - lastUpdateRef.current;
@@ -200,9 +240,10 @@ function GameContent() {
       // Update ref
       playerRef.current = { x, y, velocityY, isOnGround };
 
-      // Update Firebase (throttle to every 50ms)
-      if (now % 50 < 20) {
+      // Update Firebase (throttle to every 50ms using proper time check)
+      if (now - lastFirebaseUpdateRef.current >= 50) {
         updatePlayerPosition(x, y, velocityY);
+        lastFirebaseUpdateRef.current = now;
       }
 
       gameLoopRef.current = requestAnimationFrame(gameLoop);
@@ -215,7 +256,7 @@ function GameContent() {
         cancelAnimationFrame(gameLoopRef.current);
       }
     };
-  }, [roomId, playerId, playerColor, playerEmoji]);
+  }, [roomId, isClient]);
 
   // Keyboard controls
   useEffect(() => {
@@ -255,9 +296,20 @@ function GameContent() {
   // Cleanup player on unmount
   useEffect(() => {
     return () => {
-      deleteDoc(doc(db, 'rooms', roomId, 'players', playerId));
+      if (playerIdRef.current) {
+        deleteDoc(doc(db, 'rooms', roomId, 'players', playerIdRef.current));
+      }
     };
-  }, [roomId, playerId]);
+  }, [roomId]);
+
+  // Don't render until client-side
+  if (!isClient) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
+        Loading game...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -268,7 +320,7 @@ function GameContent() {
             Room: <span className="text-white font-mono">{roomId}</span>
           </p>
           <p className="text-sm text-gray-400">
-            You: <span className="text-2xl">{playerEmoji}</span>
+            You: <span className="text-2xl">{playerEmojiRef.current}</span>
           </p>
           <p className="text-sm text-gray-400">
             Players online: <span className="text-white">{Object.keys(players).length}</span>
@@ -301,22 +353,25 @@ function GameContent() {
             />
           ))}
 
-          {/* Other players */}
+          {/* All players including current player from Firebase */}
           {Object.entries(players).map(([id, player]) => {
-            if (id === playerId) return null; // Don't render current player from Firebase
+            const isCurrentPlayer = id === playerIdRef.current;
+
             return (
               <div
                 key={id}
                 className="absolute transition-all duration-100"
                 style={{
-                  left: `${player.x}px`,
-                  top: `${player.y}px`,
+                  left: `${isCurrentPlayer ? playerRef.current.x : player.x}px`,
+                  top: `${isCurrentPlayer ? playerRef.current.y : player.y}px`,
                   width: `${PLAYER_SIZE}px`,
                   height: `${PLAYER_SIZE}px`,
                 }}
               >
                 <div
-                  className="w-full h-full rounded-lg flex items-center justify-center text-2xl shadow-lg border-2 border-gray-800"
+                  className={`w-full h-full rounded-lg flex items-center justify-center text-2xl shadow-lg ${
+                    isCurrentPlayer ? 'border-4 border-yellow-400' : 'border-2 border-gray-800'
+                  }`}
                   style={{ backgroundColor: player.color }}
                 >
                   {player.emoji}
@@ -324,24 +379,6 @@ function GameContent() {
               </div>
             );
           })}
-
-          {/* Current player (rendered from local state for smoothness) */}
-          <div
-            className="absolute"
-            style={{
-              left: `${playerRef.current.x}px`,
-              top: `${playerRef.current.y}px`,
-              width: `${PLAYER_SIZE}px`,
-              height: `${PLAYER_SIZE}px`,
-            }}
-          >
-            <div
-              className="w-full h-full rounded-lg flex items-center justify-center text-2xl shadow-lg border-4 border-yellow-400"
-              style={{ backgroundColor: playerColor }}
-            >
-              {playerEmoji}
-            </div>
-          </div>
         </div>
       </div>
     </div>
