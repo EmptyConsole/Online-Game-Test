@@ -20,6 +20,8 @@ interface Player {
   color: string;
   emoji: string;
   lastDirection: 'left' | 'right';
+  health?: number;
+  isDead?: boolean;
 }
 
 interface InterpolatedPlayer extends Player {
@@ -27,6 +29,15 @@ interface InterpolatedPlayer extends Player {
   targetY: number;
   renderX: number;
   renderY: number;
+}
+
+interface Bullet {
+  id: string;
+  x: number;
+  y: number;
+  direction: 'left' | 'right';
+  ownerId: string;
+  createdAt: number;
 }
 
 interface Platform {
@@ -60,6 +71,11 @@ const MAP_HEIGHT = 1200;
 const VIEWPORT_WIDTH = 800;
 const VIEWPORT_HEIGHT = 600;
 const INTERPOLATION_SPEED = 0.2;
+const BULLET_SPEED = 10;
+const BULLET_SIZE = 8;
+const BULLET_LIFETIME = 5000; // 5 seconds
+const MAX_HEALTH = 3;
+const RESPAWN_TIME = 5000; // 5 seconds
 
 // Platforms - bigger map with more platforms
 const PLATFORMS: Platform[] = [
@@ -118,7 +134,11 @@ function GameContent() {
   const roomId = searchParams.get('room') || 'default-room';
 
   const [players, setPlayers] = useState<Record<string, InterpolatedPlayer>>({});
+  const [bullets, setBullets] = useState<Record<string, Bullet>>({});
   const [isClient, setIsClient] = useState(false);
+  const [health, setHealth] = useState(MAX_HEALTH);
+  const [isDead, setIsDead] = useState(false);
+  const [respawnTimer, setRespawnTimer] = useState(0);
 
   const socketRef = useRef<Socket | null>(null);
   const playerIdRef = useRef<string>('');
@@ -142,12 +162,15 @@ function GameContent() {
     left: false,
     right: false,
     jump: false,
+    shoot: false,
   });
 
   const gameLoopRef = useRef<number | undefined>(undefined);
   const lastUpdateRef = useRef<number>(Date.now());
   const lastSocketUpdateRef = useRef<number>(Date.now());
   const lastSentPosition = useRef({ x: 200, y: 900 });
+  const lastShotTime = useRef<number>(0);
+  const respawnTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -156,6 +179,26 @@ function GameContent() {
       setIsClient(true);
     }
   }, []);
+
+  // Respawn timer countdown
+  useEffect(() => {
+    if (!isDead || respawnTimer <= 0) return;
+
+    const interval = setInterval(() => {
+      setRespawnTimer((prev) => {
+        if (prev <= 1) {
+          // Respawn player
+          if (socketRef.current && socketRef.current.connected) {
+            socketRef.current.emit('respawn', { roomId });
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isDead, respawnTimer, roomId]);
 
   // Socket.io connection
   useEffect(() => {
@@ -248,6 +291,45 @@ function GameContent() {
       });
     });
 
+    // Bullet events
+    socket.on('bullet-fired', (bullet: Bullet) => {
+      setBullets((prev) => ({
+        ...prev,
+        [bullet.id]: bullet,
+      }));
+    });
+
+    socket.on('bullet-removed', (bulletId: string) => {
+      setBullets((prev) => {
+        const newBullets = { ...prev };
+        delete newBullets[bulletId];
+        return newBullets;
+      });
+    });
+
+    // Player hit event
+    socket.on('player-hit', ({ playerId, health }: { playerId: string; health: number }) => {
+      if (playerId === socket.id) {
+        setHealth(health);
+        if (health <= 0) {
+          setIsDead(true);
+          setRespawnTimer(RESPAWN_TIME / 1000);
+        }
+      }
+    });
+
+    // Player respawned event
+    socket.on('player-respawned', ({ playerId, x, y, health }: { playerId: string; x: number; y: number; health: number }) => {
+      if (playerId === socket.id) {
+        playerRef.current.x = x;
+        playerRef.current.y = y;
+        playerRef.current.velocityY = 0;
+        setHealth(health);
+        setIsDead(false);
+        setRespawnTimer(0);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log('🔌 Disconnected from server');
     });
@@ -337,6 +419,34 @@ function GameContent() {
     });
   };
 
+  const shootBullet = () => {
+    const now = Date.now();
+    const timeSinceLastShot = now - lastShotTime.current;
+
+    if (timeSinceLastShot < 500 && lastShotTime.current !== 0) {
+      return; // Cooldown
+    }
+
+    if (isDead) {
+      return; // Can't shoot when dead
+    }
+
+    lastShotTime.current = now;
+
+    const bullet: Bullet = {
+      id: `bullet-${playerIdRef.current}-${now}`,
+      x: playerRef.current.x + (playerRef.current.lastDirection === 'right' ? PLAYER_SIZE : 0),
+      y: playerRef.current.y + PLAYER_SIZE / 2 - BULLET_SIZE / 2,
+      direction: playerRef.current.lastDirection,
+      ownerId: playerIdRef.current,
+      createdAt: now,
+    };
+
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('shoot', { roomId, bullet });
+    }
+  };
+
   useEffect(() => {
     if (!isClient) return;
 
@@ -353,43 +463,49 @@ function GameContent() {
 
       let { x, y, velocityY, isOnGround, lastDirection } = playerRef.current;
 
-      // Horizontal movement
-      if (keysPressed.current.left) {
-        x -= MOVE_SPEED;
-        lastDirection = 'left';
-      }
-      if (keysPressed.current.right) {
-        x += MOVE_SPEED;
-        lastDirection = 'right';
+      // Skip movement if dead
+      if (!isDead) {
+        // Horizontal movement
+        if (keysPressed.current.left) {
+          x -= MOVE_SPEED;
+          lastDirection = 'left';
+        }
+        if (keysPressed.current.right) {
+          x += MOVE_SPEED;
+          lastDirection = 'right';
+        }
       }
 
       x = Math.max(0, Math.min(MAP_WIDTH - PLAYER_SIZE, x));
 
-      // Apply gravity
-      velocityY += GRAVITY;
-      y += velocityY;
+      // Skip physics if dead
+      if (!isDead) {
+        // Apply gravity
+        velocityY += GRAVITY;
+        y += velocityY;
 
-      // Collision detection
-      const { collided, platform } = checkCollision(x, y, velocityY);
+        // Collision detection
+        const { collided, platform } = checkCollision(x, y, velocityY);
 
-      if (collided && platform) {
-        y = platform.y - PLAYER_SIZE;
-        velocityY = 0;
-        isOnGround = true;
-      } else {
-        isOnGround = false;
-      }
+        if (collided && platform) {
+          y = platform.y - PLAYER_SIZE;
+          velocityY = 0;
+          isOnGround = true;
+        } else {
+          isOnGround = false;
+        }
 
-      if (y > MAP_HEIGHT - PLAYER_SIZE) {
-        y = MAP_HEIGHT - PLAYER_SIZE;
-        velocityY = 0;
-        isOnGround = true;
-      }
+        if (y > MAP_HEIGHT - PLAYER_SIZE) {
+          y = MAP_HEIGHT - PLAYER_SIZE;
+          velocityY = 0;
+          isOnGround = true;
+        }
 
-      // Jump
-      if (keysPressed.current.jump && isOnGround) {
-        velocityY = JUMP_STRENGTH;
-        isOnGround = false;
+        // Jump
+        if (keysPressed.current.jump && isOnGround) {
+          velocityY = JUMP_STRENGTH;
+          isOnGround = false;
+        }
       }
 
       playerRef.current = { x, y, velocityY, isOnGround, lastDirection };
@@ -435,7 +551,7 @@ function GameContent() {
         cancelAnimationFrame(gameLoopRef.current);
       }
     };
-  }, [isClient]);
+  }, [isClient, isDead]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -448,6 +564,13 @@ function GameContent() {
       if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ') {
         keysPressed.current.jump = true;
       }
+      if (e.key === 'm' || e.key === 'M' || e.key === 'x' || e.key === 'X') {
+        keysPressed.current.shoot = true;
+        e.preventDefault(); // Prevent default browser behavior
+
+        // Also trigger shoot immediately
+        shootBullet();
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
@@ -459,6 +582,9 @@ function GameContent() {
       }
       if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ') {
         keysPressed.current.jump = false;
+      }
+      if (e.key === 'm' || e.key === 'M' || e.key === 'x' || e.key === 'X') {
+        keysPressed.current.shoot = false;
       }
     };
 
@@ -500,8 +626,23 @@ function GameContent() {
           </p>
         </div>
         <p className="text-sm text-gray-400 mt-2">
-          Controls: Arrow Keys/WASD to move, Space/W/Up to jump
+          Controls: Arrow Keys/WASD to move, Space/W/Up to jump, M/X to shoot
         </p>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-sm text-gray-400">Health:</span>
+          <div className="flex gap-1">
+            {[...Array(MAX_HEALTH)].map((_, i) => (
+              <div
+                key={i}
+                className={`w-6 h-6 rounded ${
+                  i < health ? 'bg-red-500' : 'bg-gray-600'
+                }`}
+              >
+                {i < health ? '❤️' : ''}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="flex items-center justify-center p-8">
@@ -525,6 +666,37 @@ function GameContent() {
               }}
             />
           ))}
+
+          {/* Bullets */}
+          {Object.entries(bullets).map(([id, bullet]) => {
+            const now = Date.now();
+            const age = now - bullet.createdAt;
+            const distance = (age / 1000) * BULLET_SPEED * 60;
+            const bulletX = bullet.direction === 'right' ? bullet.x + distance : bullet.x - distance;
+            const bulletY = bullet.y;
+
+            const screenX = bulletX - cameraRef.current.x;
+            const screenY = bulletY - cameraRef.current.y;
+
+            // Only render if in viewport
+            if (screenX < -50 || screenX > VIEWPORT_WIDTH + 50 || screenY < -50 || screenY > VIEWPORT_HEIGHT + 50) {
+              return null;
+            }
+
+            return (
+              <div
+                key={id}
+                className="absolute bg-yellow-400 rounded-full border-2 border-yellow-600"
+                style={{
+                  left: `${screenX}px`,
+                  top: `${screenY}px`,
+                  width: `${BULLET_SIZE}px`,
+                  height: `${BULLET_SIZE}px`,
+                  zIndex: 15,
+                }}
+              />
+            );
+          })}
 
           {/* Players */}
           {Object.entries(players).map(([id, player]) => {
@@ -572,6 +744,18 @@ function GameContent() {
               </div>
             );
           })}
+
+          {/* Respawn Overlay */}
+          {isDead && (
+            <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+              <div className="text-center">
+                <h2 className="text-4xl font-bold text-red-500 mb-4">💀 You Died!</h2>
+                <p className="text-2xl text-white">
+                  Respawning in {respawnTimer} seconds...
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
