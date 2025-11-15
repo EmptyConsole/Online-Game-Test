@@ -22,10 +22,10 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-gray-800 rounded-lg shadow-2xl p-8 border border-gray-700">
         <h1 className="text-4xl font-bold text-white mb-2 text-center">
-          Multiplayer Game
+          Multiplayer Platformer
         </h1>
         <p className="text-gray-400 text-center mb-8">
-          Click anywhere to place your character and play with friends in real-time!
+          Jump around and play with friends in real-time!
         </p>
 
         <div className="space-y-6">
@@ -76,9 +76,9 @@ export default function Home() {
           <h2 className="text-sm font-semibold text-white mb-2">How to Play:</h2>
           <ul className="text-sm text-gray-300 space-y-1">
             <li>• Create a room and share the room code with friends</li>
-            <li>• Click anywhere on the board to place your character</li>
-            <li>• Click on your characters to remove them</li>
-            <li>• See other players' characters in real-time</li>
+            <li>• Use Arrow Keys or WASD to move left and right</li>
+            <li>• Press Space, W, or Up Arrow to jump</li>
+            <li>• See other players move around in real-time</li>
           </ul>
         </div>
       </div>

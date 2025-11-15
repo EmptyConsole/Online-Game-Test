@@ -1,15 +1,16 @@
-# Multiplayer Game
+# Multiplayer Platformer
 
-A real-time multiplayer game built with Next.js and Firebase where players can join rooms and place characters on a shared board.
+A real-time multiplayer platformer game built with Next.js and Firebase where players can join rooms and jump around on platforms together.
 
 ## Features
 
 - Real-time multiplayer synchronization using Firebase Firestore
 - Create and join game rooms with unique room codes
-- Click anywhere to place your character
-- See all players' characters update in real-time
+- Classic platformer physics with gravity and jumping
+- Keyboard controls (Arrow Keys or WASD)
+- See all players move around in real-time
 - Each player gets a unique emoji and color
-- Click on your characters to remove them
+- Smooth local player movement with network synchronization
 
 ## Setup Instructions
 
@@ -63,9 +64,15 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 1. **Create a Room**: Click "Create New Room" to start a new game
 2. **Share Room Code**: Copy the room code from the URL and share it with friends
 3. **Join a Room**: Enter a room code and click "Join"
-4. **Place Characters**: Click anywhere on the game board to place your character
-5. **Remove Characters**: Click on your own characters to remove them
-6. **Play Together**: All players in the same room see each other's characters in real-time
+4. **Move Around**: Use Arrow Keys or WASD to move left and right
+5. **Jump**: Press Space, W, or Up Arrow to jump on platforms
+6. **Play Together**: All players in the same room see each other move in real-time
+
+## Controls
+
+- **Move Left**: Left Arrow or A
+- **Move Right**: Right Arrow or D
+- **Jump**: Space, W, or Up Arrow
 
 ## Deployment
 
@@ -85,10 +92,10 @@ Before deploying to production, update your Firestore security rules:
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /rooms/{roomId}/characters/{characterId} {
+    match /rooms/{roomId}/players/{playerId} {
       allow read: if true;
-      allow write: if request.resource.data.playerId == request.auth.uid || request.auth == null;
-      allow delete: if resource.data.playerId == request.auth.uid || request.auth == null;
+      allow write: if request.auth == null;
+      allow delete: if request.auth == null;
     }
   }
 }
@@ -107,7 +114,7 @@ service cloud.firestore {
 ```
 ├── app/
 │   ├── game/
-│   │   └── page.tsx       # Game board component
+│   │   └── page.tsx       # Platformer game component with physics
 │   ├── layout.tsx         # Root layout
 │   ├── page.tsx           # Home page (create/join room)
 │   └── globals.css        # Global styles
@@ -115,6 +122,13 @@ service cloud.firestore {
 │   └── firebase.ts        # Firebase configuration
 └── .env.local.example     # Environment variables template
 ```
+
+## Game Features
+
+- **Physics System**: Gravity, jumping, and collision detection
+- **Platforms**: Multiple platforms to jump on and explore
+- **Real-time Sync**: Player positions update across all clients
+- **Smooth Movement**: Local player uses client-side prediction for responsive controls
 
 ## License
 
