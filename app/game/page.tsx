@@ -86,7 +86,7 @@ function GameContent() {
     up: false,
   });
 
-  const gameLoopRef = useRef<number>();
+  const gameLoopRef = useRef<number | undefined>(undefined);
   const lastUpdateRef = useRef<number>(Date.now());
   const lastFirebaseUpdateRef = useRef<number>(Date.now());
 
@@ -105,16 +105,28 @@ function GameContent() {
     if (!isClient || !playerIdRef.current) return;
 
     const initializePlayer = async () => {
-      await setDoc(
-        doc(db, 'rooms', roomId, 'players', playerIdRef.current),
-        {
-          x: playerRef.current.x,
-          y: playerRef.current.y,
-          color: playerColorRef.current,
-          emoji: playerEmojiRef.current,
-          velocityY: 0,
-        }
-      );
+      console.log('Initializing player in Firebase:', {
+        playerId: playerIdRef.current,
+        roomId: roomId,
+        emoji: playerEmojiRef.current,
+        color: playerColorRef.current
+      });
+
+      try {
+        await setDoc(
+          doc(db, 'rooms', roomId, 'players', playerIdRef.current),
+          {
+            x: playerRef.current.x,
+            y: playerRef.current.y,
+            color: playerColorRef.current,
+            emoji: playerEmojiRef.current,
+            velocityY: 0,
+          }
+        );
+        console.log('Player added to Firebase successfully');
+      } catch (error) {
+        console.error('Error adding player to Firebase:', error);
+      }
     };
 
     initializePlayer();
@@ -131,7 +143,12 @@ function GameContent() {
         snapshot.forEach((doc) => {
           playersData[doc.id] = { id: doc.id, ...doc.data() } as Player;
         });
+        console.log('Firebase players update:', playersData);
+        console.log('My player ID:', playerIdRef.current);
         setPlayers(playersData);
+      },
+      (error) => {
+        console.error('Firebase snapshot error:', error);
       }
     );
 
