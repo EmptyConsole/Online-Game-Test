@@ -1,15 +1,17 @@
 'use client';
 
 import { useEffect, useState, useRef, Suspense } from 'react';
-import { db } from '@/lib/firebase';
-import {
-  collection,
-  doc,
-  setDoc,
-  onSnapshot,
-  deleteDoc,
-} from 'firebase/firestore';
+// FIREBASE CODE COMMENTED OUT - keeping for backup
+// import { db } from '@/lib/firebase';
+// import {
+//   collection,
+//   doc,
+//   setDoc,
+//   onSnapshot,
+//   deleteDoc,
+// } from 'firebase/firestore';
 import { useSearchParams } from 'next/navigation';
+import { io, Socket } from 'socket.io-client';
 
 interface Player {
   id: string;
@@ -118,6 +120,7 @@ function GameContent() {
   const [players, setPlayers] = useState<Record<string, InterpolatedPlayer>>({});
   const [isClient, setIsClient] = useState(false);
 
+  const socketRef = useRef<Socket | null>(null);
   const playerIdRef = useRef<string>('');
   const playerEmojiRef = useRef<string>('');
   const playerColorRef = useRef<string>('');
@@ -143,18 +146,119 @@ function GameContent() {
 
   const gameLoopRef = useRef<number | undefined>(undefined);
   const lastUpdateRef = useRef<number>(Date.now());
-  const lastFirebaseUpdateRef = useRef<number>(Date.now());
+  const lastSocketUpdateRef = useRef<number>(Date.now());
   const lastSentPosition = useRef({ x: 200, y: 900 });
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      playerIdRef.current = `player-${Math.random().toString(36).substr(2, 9)}`;
       playerEmojiRef.current = EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
       playerColorRef.current = COLORS[Math.floor(Math.random() * COLORS.length)];
       setIsClient(true);
     }
   }, []);
 
+  // Socket.io connection
+  useEffect(() => {
+    if (!isClient) return;
+
+    console.log('🔌 Connecting to Socket.io server...');
+
+    // Use current hostname (works for both localhost and ngrok)
+    const socket = io({
+      transports: ['websocket', 'polling'],
+    });
+
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('✅ Connected to server! Socket ID:', socket.id);
+      playerIdRef.current = socket.id;
+
+      // Join the room
+      const playerData = {
+        x: playerRef.current.x,
+        y: playerRef.current.y,
+        color: playerColorRef.current,
+        emoji: playerEmojiRef.current,
+        lastDirection: 'right' as const,
+      };
+
+      console.log('🚪 Joining room:', roomId);
+      socket.emit('join-room', { roomId, playerData });
+    });
+
+    // Receive all players state when joining
+    socket.on('players-state', (allPlayers: Record<string, Player>) => {
+      console.log('🎮 Received all players:', Object.keys(allPlayers).length);
+      const interpolatedPlayers: Record<string, InterpolatedPlayer> = {};
+
+      Object.entries(allPlayers).forEach(([id, player]) => {
+        interpolatedPlayers[id] = {
+          ...player,
+          targetX: player.x,
+          targetY: player.y,
+          renderX: player.x,
+          renderY: player.y,
+        };
+      });
+
+      setPlayers(interpolatedPlayers);
+    });
+
+    // New player joined
+    socket.on('player-joined', (playerData: Player) => {
+      console.log('👤 Player joined:', playerData.id, playerData.emoji);
+      setPlayers((prev) => ({
+        ...prev,
+        [playerData.id]: {
+          ...playerData,
+          targetX: playerData.x,
+          targetY: playerData.y,
+          renderX: playerData.x,
+          renderY: playerData.y,
+        },
+      }));
+    });
+
+    // Player position updated
+    socket.on('player-updated', (playerData: Player) => {
+      setPlayers((prev) => {
+        const existing = prev[playerData.id];
+        if (!existing) return prev;
+
+        return {
+          ...prev,
+          [playerData.id]: {
+            ...existing,
+            ...playerData,
+            targetX: playerData.x,
+            targetY: playerData.y,
+          },
+        };
+      });
+    });
+
+    // Player left
+    socket.on('player-left', (playerId: string) => {
+      console.log('👋 Player left:', playerId);
+      setPlayers((prev) => {
+        const newPlayers = { ...prev };
+        delete newPlayers[playerId];
+        return newPlayers;
+      });
+    });
+
+    socket.on('disconnect', () => {
+      console.log('🔌 Disconnected from server');
+    });
+
+    return () => {
+      console.log('🔌 Cleaning up socket connection');
+      socket.disconnect();
+    };
+  }, [isClient, roomId]);
+
+  /* FIREBASE CODE COMMENTED OUT
   useEffect(() => {
     if (!isClient || !playerIdRef.current) return;
 
@@ -182,27 +286,12 @@ function GameContent() {
   useEffect(() => {
     if (!isClient) return;
 
-    console.log('🎮 Setting up player listener for room:', roomId);
-    console.log('🎮 My player ID:', playerIdRef.current);
-
     const unsubscribe = onSnapshot(
       collection(db, 'rooms', roomId, 'players'),
       (snapshot) => {
-        console.log('🔥 Firebase snapshot received!');
-        console.log('🔥 Total players in room:', snapshot.size);
-
         const playersData: Record<string, InterpolatedPlayer> = {};
-
         snapshot.forEach((doc) => {
           const data = doc.data() as Player;
-          console.log('👤 Player found:', {
-            id: doc.id,
-            emoji: data.emoji,
-            x: data.x,
-            y: data.y,
-            color: data.color
-          });
-
           playersData[doc.id] = {
             ...data,
             id: doc.id,
@@ -212,21 +301,13 @@ function GameContent() {
             renderY: data.y,
           };
         });
-
-        console.log('✅ Setting players state:', Object.keys(playersData).map(id => id.slice(0, 8)));
-        console.log('✅ Total players being set:', Object.keys(playersData).length);
         setPlayers(playersData);
-      },
-      (error) => {
-        console.error('❌ Firebase players error:', error);
       }
     );
 
-    return () => {
-      console.log('🔌 Disconnecting player listener');
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [roomId, isClient]);
+  */
 
   const checkCollision = (x: number, y: number, velocityY: number): { collided: boolean; platform: Platform | null } => {
     for (const platform of PLATFORMS) {
@@ -244,26 +325,16 @@ function GameContent() {
     return { collided: false, platform: null };
   };
 
-  const updatePlayerPosition = async (x: number, y: number, lastDirection: 'left' | 'right') => {
-    if (!playerIdRef.current) return;
+  const updatePlayerPosition = (x: number, y: number, lastDirection: 'left' | 'right') => {
+    if (!socketRef.current || !socketRef.current.connected) return;
 
-    try {
-      await setDoc(
-        doc(db, 'rooms', roomId, 'players', playerIdRef.current),
-        {
-          x,
-          y,
-          color: playerColorRef.current,
-          emoji: playerEmojiRef.current,
-          lastDirection,
-        }
-      );
-    } catch (error) {
-      // Silently handle quota errors to avoid console spam
-      if (!error.toString().includes('quota')) {
-        console.error('Error updating player position:', error);
-      }
-    }
+    socketRef.current.emit('player-update', {
+      x,
+      y,
+      color: playerColorRef.current,
+      emoji: playerEmojiRef.current,
+      lastDirection,
+    });
   };
 
   useEffect(() => {
@@ -327,27 +398,21 @@ function GameContent() {
       cameraRef.current.x = Math.max(0, Math.min(MAP_WIDTH - VIEWPORT_WIDTH, x - VIEWPORT_WIDTH / 2 + PLAYER_SIZE / 2));
       cameraRef.current.y = Math.max(0, Math.min(MAP_HEIGHT - VIEWPORT_HEIGHT, y - VIEWPORT_HEIGHT / 2 + PLAYER_SIZE / 2));
 
-      // Only update Firebase if position changed significantly AND enough time passed
+      // Send position updates via Socket.io (every 100ms or significant movement)
       const distanceMoved = Math.sqrt(
         Math.pow(x - lastSentPosition.current.x, 2) +
         Math.pow(y - lastSentPosition.current.y, 2)
       );
 
-      // Update every 1 second OR if moved more than 50 pixels
-      const shouldUpdate = (now - lastFirebaseUpdateRef.current >= 1000) || (distanceMoved > 50);
+      const shouldUpdate = (now - lastSocketUpdateRef.current >= 100) || (distanceMoved > 30);
 
       if (shouldUpdate) {
-        console.log('📤 Sending position update:', { x, y, lastDirection });
         updatePlayerPosition(x, y, lastDirection);
-        lastFirebaseUpdateRef.current = now;
+        lastSocketUpdateRef.current = now;
         lastSentPosition.current = { x, y };
       }
 
-      // Interpolate other players (log less frequently)
-      if (Math.random() < 0.01) { // Only log 1% of frames
-        console.log('🔄 Players in state:', Object.keys(players).length);
-      }
-
+      // Interpolate other players
       setPlayers((prev) => {
         const updated = { ...prev };
         Object.keys(updated).forEach((id) => {
@@ -370,7 +435,7 @@ function GameContent() {
         cancelAnimationFrame(gameLoopRef.current);
       }
     };
-  }, [roomId, isClient]);
+  }, [isClient]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -406,16 +471,6 @@ function GameContent() {
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (playerIdRef.current) {
-        deleteDoc(doc(db, 'rooms', roomId, 'players', playerIdRef.current)).catch((e) => {
-          console.error('Error cleaning up player:', e);
-        });
-      }
-    };
-  }, [roomId]);
-
   if (!isClient) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
@@ -427,26 +482,22 @@ function GameContent() {
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <div className="p-4 bg-gray-800 border-b border-gray-700">
-        <h1 className="text-2xl font-bold">Multiplayer Platformer</h1>
+        <h1 className="text-2xl font-bold">Multiplayer Platformer (Socket.io)</h1>
         <div className="mt-2 flex items-center gap-4">
           <p className="text-sm text-gray-400">
             Room: <span className="text-white font-mono">{roomId}</span>
           </p>
           <p className="text-sm text-gray-400">
-            You: <span className="text-2xl">{playerEmojiRef.current}</span> ({playerIdRef.current.slice(0, 8)})
+            You: <span className="text-2xl">{playerEmojiRef.current}</span>
           </p>
           <p className="text-sm text-gray-400">
             Players online: <span className="text-white">{Object.keys(players).length}</span>
           </p>
           <p className="text-sm text-gray-400">
-            Position: <span className="text-white">({Math.round(playerRef.current.x)}, {Math.round(playerRef.current.y)})</span>
+            Socket: <span className={socketRef.current?.connected ? 'text-green-400' : 'text-red-400'}>
+              {socketRef.current?.connected ? '🟢 Connected' : '🔴 Disconnected'}
+            </span>
           </p>
-        </div>
-        <div className="mt-1 text-xs text-gray-500">
-          Players in state: {Object.keys(players).map(id => id.slice(0, 8)).join(', ') || 'NONE'}
-        </div>
-        <div className="mt-1 text-xs font-bold" style={{ color: Object.keys(players).length > 1 ? '#00ff00' : '#ff0000' }}>
-          {Object.keys(players).length > 1 ? '✅ MULTIPLAYER WORKING!' : '⚠️ Only you in room (invite someone!)'}
         </div>
         <p className="text-sm text-gray-400 mt-2">
           Controls: Arrow Keys/WASD to move, Space/W/Up to jump
@@ -476,37 +527,20 @@ function GameContent() {
           ))}
 
           {/* Players */}
-          {Object.entries(players).length === 0 && (
-            <div className="absolute top-4 left-4 text-white bg-red-600 px-3 py-2 rounded">
-              ⚠️ No players in state!
-            </div>
-          )}
           {Object.entries(players).map(([id, player]) => {
             const isCurrentPlayer = id === playerIdRef.current;
 
-            // Use local position for current player, interpolated for others
             let displayX, displayY;
             if (isCurrentPlayer) {
               displayX = playerRef.current.x;
               displayY = playerRef.current.y;
-              console.log('🎯 Rendering current player at:', displayX, displayY);
             } else {
               displayX = player.renderX;
               displayY = player.renderY;
-              console.log('👥 Rendering other player', id.slice(0, 8), 'at:', displayX, displayY);
             }
 
             const screenX = displayX - cameraRef.current.x;
             const screenY = displayY - cameraRef.current.y;
-
-            console.log(`📍 Player ${id.slice(0, 8)} screen position:`, screenX, screenY, 'Camera:', cameraRef.current);
-
-            // Don't filter by screen bounds during debugging
-            // if (screenX < -100 || screenX > VIEWPORT_WIDTH + 100 ||
-            //     screenY < -100 || screenY > VIEWPORT_HEIGHT + 100) {
-            //   console.log(`🚫 Player ${id.slice(0, 8)} off screen, skipping render`);
-            //   return null;
-            // }
 
             return (
               <div
@@ -523,17 +557,17 @@ function GameContent() {
               >
                 <div
                   className={`w-full h-full rounded-lg flex items-center justify-center text-2xl shadow-lg ${
-                    isCurrentPlayer ? 'border-4 border-yellow-400' : 'border-4 border-red-600'
+                    isCurrentPlayer ? 'border-4 border-yellow-400' : 'border-4 border-blue-600'
                   }`}
                   style={{ backgroundColor: player.color }}
                 >
                   {player.emoji}
                 </div>
-                {/* Debug label for ALL players */}
-                <div className={`absolute -top-8 left-0 text-xs text-white px-1 rounded ${
-                  isCurrentPlayer ? 'bg-yellow-600' : 'bg-red-600'
+                {/* Label */}
+                <div className={`absolute -top-8 left-0 text-xs text-white px-1 rounded whitespace-nowrap ${
+                  isCurrentPlayer ? 'bg-yellow-600' : 'bg-blue-600'
                 }`}>
-                  {isCurrentPlayer ? 'YOU' : 'OTHER'}: {player.emoji} ({Math.round(displayX)}, {Math.round(displayY)})
+                  {isCurrentPlayer ? 'YOU' : 'OTHER'}: {player.emoji}
                 </div>
               </div>
             );
