@@ -1,16 +1,19 @@
 # Multiplayer Platformer
 
-A real-time multiplayer platformer game built with Next.js and Firebase where players can join rooms and jump around on platforms together.
+A real-time multiplayer 2D platformer game built with Next.js and Firebase where players can explore and jump across platforms together in a large scrolling world.
 
 ## Features
 
 - Real-time multiplayer synchronization using Firebase Firestore
 - Create and join game rooms with unique room codes
-- Classic platformer physics with gravity and jumping
-- Keyboard controls (Arrow Keys or WASD)
-- See all players move around in real-time
+- 2D platformer gameplay with gravity and jumping
+- Large scrolling map (2400x1200) with camera following
+- Position interpolation for smooth multiplayer movement
+- Multiple platforms at different heights to explore
+- Keyboard controls (Arrow Keys/WASD to move, Space to jump)
 - Each player gets a unique emoji and color
-- Smooth local player movement with network synchronization
+- Players flip direction when moving left/right
+- Debug mode showing player positions and IDs
 
 ## Setup Instructions
 
@@ -64,15 +67,16 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 1. **Create a Room**: Click "Create New Room" to start a new game
 2. **Share Room Code**: Copy the room code from the URL and share it with friends
 3. **Join a Room**: Enter a room code and click "Join"
-4. **Move Around**: Use Arrow Keys or WASD to move left and right
+4. **Move Around**: Use Arrow Keys or A/D to move left and right
 5. **Jump**: Press Space, W, or Up Arrow to jump on platforms
-6. **Play Together**: All players in the same room see each other move in real-time
+6. **Explore**: The camera follows you as you explore the large map
+7. **Play Together**: See other players in real-time as you all explore the map
 
 ## Controls
 
 - **Move Left**: Left Arrow or A
 - **Move Right**: Right Arrow or D
-- **Jump**: Space, W, or Up Arrow
+- **Jump**: Space, Up Arrow, or W
 
 ## Deployment
 
@@ -114,21 +118,32 @@ service cloud.firestore {
 ```
 ├── app/
 │   ├── game/
-│   │   └── page.tsx       # Platformer game component with physics
+│   │   └── page.tsx       # Platformer with camera scrolling and multiplayer
 │   ├── layout.tsx         # Root layout
 │   ├── page.tsx           # Home page (create/join room)
 │   └── globals.css        # Global styles
 ├── lib/
 │   └── firebase.ts        # Firebase configuration
-└── .env.local.example     # Environment variables template
+└── .env.local             # Environment variables (create from .env.local.example)
 ```
+
+## Technical Implementation
+
+- **Camera System**: Smooth camera follows the player, keeping them centered while respecting map boundaries
+- **Collision Detection**: Platform collision checks player bounds against all platforms in the map
+- **Interpolation**: Other players' positions are smoothly interpolated for lag compensation
+- **Firebase Optimization**: Position updates throttled to 200ms to stay within free tier limits
+- **Efficient Rendering**: Only renders players and platforms visible on screen
 
 ## Game Features
 
-- **Physics System**: Gravity, jumping, and collision detection
-- **Platforms**: Multiple platforms to jump on and explore
+- **Platformer Mechanics**: Gravity-based physics with jumping
+- **Large Scrolling Map**: 2400x1200 pixel world with camera following player
+- **Multiple Platforms**: Over 30 platforms at different heights to explore
+- **Position Interpolation**: Smooth rendering of other players' movements
 - **Real-time Sync**: Player positions update across all clients
-- **Smooth Movement**: Local player uses client-side prediction for responsive controls
+- **Client-side Prediction**: Local player uses immediate updates for responsive controls
+- **Debug Mode**: Shows player count, IDs, and positions for troubleshooting
 
 ## License
 

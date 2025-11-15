@@ -25,7 +25,7 @@ export default function Home() {
           Multiplayer Platformer
         </h1>
         <p className="text-gray-400 text-center mb-8">
-          Jump around and play with friends in real-time!
+          Jump and explore a large scrolling platformer world with friends!
         </p>
 
         <div className="space-y-6">
@@ -76,9 +76,10 @@ export default function Home() {
           <h2 className="text-sm font-semibold text-white mb-2">How to Play:</h2>
           <ul className="text-sm text-gray-300 space-y-1">
             <li>• Create a room and share the room code with friends</li>
-            <li>• Use Arrow Keys or WASD to move left and right</li>
-            <li>• Press Space, W, or Up Arrow to jump</li>
-            <li>• See other players move around in real-time</li>
+            <li>• Arrow Keys/A/D to move left and right</li>
+            <li>• Space/W/Up to jump on platforms</li>
+            <li>• Explore a large scrolling map together</li>
+            <li>• See other players in real-time as you explore</li>
           </ul>
         </div>
       </div>

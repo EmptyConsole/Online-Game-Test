@@ -17,7 +17,14 @@ interface Player {
   y: number;
   color: string;
   emoji: string;
-  velocityY: number;
+  lastDirection: 'left' | 'right';
+}
+
+interface InterpolatedPlayer extends Player {
+  targetX: number;
+  targetY: number;
+  renderX: number;
+  renderY: number;
 }
 
 interface Platform {
@@ -42,55 +49,103 @@ const COLORS = [
 ];
 
 // Game constants
-const GRAVITY = 0.5;
-const JUMP_STRENGTH = -12;
+const GRAVITY = 0.6;
+const JUMP_STRENGTH = -15;
 const MOVE_SPEED = 5;
 const PLAYER_SIZE = 40;
-const GAME_WIDTH = 800;
-const GAME_HEIGHT = 600;
+const MAP_WIDTH = 2400;
+const MAP_HEIGHT = 1200;
+const VIEWPORT_WIDTH = 800;
+const VIEWPORT_HEIGHT = 600;
+const INTERPOLATION_SPEED = 0.2;
 
-// Platforms
+// Platforms - bigger map with more platforms
 const PLATFORMS: Platform[] = [
-  { x: 0, y: 550, width: 800, height: 50 }, // Ground
-  { x: 100, y: 450, width: 150, height: 20 },
-  { x: 350, y: 350, width: 150, height: 20 },
-  { x: 600, y: 450, width: 150, height: 20 },
-  { x: 200, y: 250, width: 120, height: 20 },
-  { x: 480, y: 200, width: 120, height: 20 },
-  { x: 0, y: 150, width: 100, height: 20 },
-  { x: 700, y: 150, width: 100, height: 20 },
+  // Ground sections
+  { x: 0, y: 1150, width: 400, height: 50 },
+  { x: 500, y: 1150, width: 400, height: 50 },
+  { x: 1000, y: 1150, width: 400, height: 50 },
+  { x: 1500, y: 1150, width: 400, height: 50 },
+  { x: 2000, y: 1150, width: 400, height: 50 },
+
+  // Lower platforms
+  { x: 200, y: 1000, width: 150, height: 20 },
+  { x: 450, y: 950, width: 150, height: 20 },
+  { x: 700, y: 1000, width: 150, height: 20 },
+  { x: 1000, y: 950, width: 200, height: 20 },
+  { x: 1300, y: 1000, width: 150, height: 20 },
+  { x: 1600, y: 950, width: 150, height: 20 },
+  { x: 1900, y: 1000, width: 150, height: 20 },
+  { x: 2150, y: 950, width: 150, height: 20 },
+
+  // Middle platforms
+  { x: 100, y: 800, width: 120, height: 20 },
+  { x: 350, y: 750, width: 150, height: 20 },
+  { x: 600, y: 800, width: 120, height: 20 },
+  { x: 850, y: 700, width: 150, height: 20 },
+  { x: 1150, y: 750, width: 200, height: 20 },
+  { x: 1450, y: 800, width: 120, height: 20 },
+  { x: 1700, y: 750, width: 150, height: 20 },
+  { x: 1950, y: 800, width: 120, height: 20 },
+  { x: 2200, y: 750, width: 150, height: 20 },
+
+  // Upper platforms
+  { x: 250, y: 550, width: 150, height: 20 },
+  { x: 550, y: 500, width: 120, height: 20 },
+  { x: 800, y: 450, width: 150, height: 20 },
+  { x: 1100, y: 500, width: 200, height: 20 },
+  { x: 1400, y: 550, width: 120, height: 20 },
+  { x: 1700, y: 500, width: 150, height: 20 },
+  { x: 2000, y: 550, width: 150, height: 20 },
+
+  // Top platforms
+  { x: 400, y: 300, width: 150, height: 20 },
+  { x: 750, y: 250, width: 120, height: 20 },
+  { x: 1050, y: 200, width: 150, height: 20 },
+  { x: 1350, y: 250, width: 200, height: 20 },
+  { x: 1700, y: 300, width: 150, height: 20 },
+  { x: 2050, y: 250, width: 120, height: 20 },
+
+  // Floating islands
+  { x: 50, y: 350, width: 100, height: 20 },
+  { x: 2250, y: 350, width: 100, height: 20 },
 ];
 
 function GameContent() {
   const searchParams = useSearchParams();
   const roomId = searchParams.get('room') || 'default-room';
 
-  const [players, setPlayers] = useState<Record<string, Player>>({});
+  const [players, setPlayers] = useState<Record<string, InterpolatedPlayer>>({});
   const [isClient, setIsClient] = useState(false);
 
-  // Use refs for player identity to avoid hydration issues
   const playerIdRef = useRef<string>('');
   const playerEmojiRef = useRef<string>('');
   const playerColorRef = useRef<string>('');
 
   const playerRef = useRef({
-    x: 100,
-    y: 400,
+    x: 200,
+    y: 900,
     velocityY: 0,
     isOnGround: false,
+    lastDirection: 'right' as 'left' | 'right',
+  });
+
+  const cameraRef = useRef({
+    x: 0,
+    y: 0,
   });
 
   const keysPressed = useRef({
     left: false,
     right: false,
-    up: false,
+    jump: false,
   });
 
   const gameLoopRef = useRef<number | undefined>(undefined);
   const lastUpdateRef = useRef<number>(Date.now());
   const lastFirebaseUpdateRef = useRef<number>(Date.now());
+  const lastSentPosition = useRef({ x: 200, y: 900 });
 
-  // Initialize on client side only
   useEffect(() => {
     if (typeof window !== 'undefined') {
       playerIdRef.current = `player-${Math.random().toString(36).substr(2, 9)}`;
@@ -100,18 +155,10 @@ function GameContent() {
     }
   }, []);
 
-  // Add player to Firebase immediately when initialized
   useEffect(() => {
     if (!isClient || !playerIdRef.current) return;
 
     const initializePlayer = async () => {
-      console.log('Initializing player in Firebase:', {
-        playerId: playerIdRef.current,
-        roomId: roomId,
-        emoji: playerEmojiRef.current,
-        color: playerColorRef.current
-      });
-
       try {
         await setDoc(
           doc(db, 'rooms', roomId, 'players', playerIdRef.current),
@@ -120,7 +167,7 @@ function GameContent() {
             y: playerRef.current.y,
             color: playerColorRef.current,
             emoji: playerEmojiRef.current,
-            velocityY: 0,
+            lastDirection: 'right',
           }
         );
         console.log('Player added to Firebase successfully');
@@ -135,37 +182,60 @@ function GameContent() {
   useEffect(() => {
     if (!isClient) return;
 
-    // Listen to real-time updates from Firebase
+    console.log('🎮 Setting up player listener for room:', roomId);
+    console.log('🎮 My player ID:', playerIdRef.current);
+
     const unsubscribe = onSnapshot(
       collection(db, 'rooms', roomId, 'players'),
       (snapshot) => {
-        const playersData: Record<string, Player> = {};
+        console.log('🔥 Firebase snapshot received!');
+        console.log('🔥 Total players in room:', snapshot.size);
+
+        const playersData: Record<string, InterpolatedPlayer> = {};
+
         snapshot.forEach((doc) => {
-          playersData[doc.id] = { id: doc.id, ...doc.data() } as Player;
+          const data = doc.data() as Player;
+          console.log('👤 Player found:', {
+            id: doc.id,
+            emoji: data.emoji,
+            x: data.x,
+            y: data.y,
+            color: data.color
+          });
+
+          playersData[doc.id] = {
+            ...data,
+            id: doc.id,
+            targetX: data.x,
+            targetY: data.y,
+            renderX: data.x,
+            renderY: data.y,
+          };
         });
-        console.log('Firebase players update:', playersData);
-        console.log('My player ID:', playerIdRef.current);
+
+        console.log('✅ Setting players state:', Object.keys(playersData).map(id => id.slice(0, 8)));
+        console.log('✅ Total players being set:', Object.keys(playersData).length);
         setPlayers(playersData);
       },
       (error) => {
-        console.error('Firebase snapshot error:', error);
+        console.error('❌ Firebase players error:', error);
       }
     );
 
-    return () => unsubscribe();
+    return () => {
+      console.log('🔌 Disconnecting player listener');
+      unsubscribe();
+    };
   }, [roomId, isClient]);
 
-  // Collision detection
   const checkCollision = (x: number, y: number, velocityY: number): { collided: boolean; platform: Platform | null } => {
     for (const platform of PLATFORMS) {
-      // Check if player is overlapping with platform
       if (
         x < platform.x + platform.width &&
         x + PLAYER_SIZE > platform.x &&
         y + PLAYER_SIZE > platform.y &&
         y + PLAYER_SIZE <= platform.y + platform.height
       ) {
-        // Only collide if moving downward
         if (velocityY >= 0) {
           return { collided: true, platform };
         }
@@ -174,8 +244,7 @@ function GameContent() {
     return { collided: false, platform: null };
   };
 
-  // Update player position in Firebase
-  const updatePlayerPosition = async (x: number, y: number, velocityY: number) => {
+  const updatePlayerPosition = async (x: number, y: number, lastDirection: 'left' | 'right') => {
     if (!playerIdRef.current) return;
 
     try {
@@ -186,15 +255,17 @@ function GameContent() {
           y,
           color: playerColorRef.current,
           emoji: playerEmojiRef.current,
-          velocityY,
+          lastDirection,
         }
       );
     } catch (error) {
-      console.error('Error updating player position:', error);
+      // Silently handle quota errors to avoid console spam
+      if (!error.toString().includes('quota')) {
+        console.error('Error updating player position:', error);
+      }
     }
   };
 
-  // Game loop
   useEffect(() => {
     if (!isClient) return;
 
@@ -202,7 +273,6 @@ function GameContent() {
       const now = Date.now();
       const deltaTime = now - lastUpdateRef.current;
 
-      // Only update if enough time has passed (throttle to ~60 FPS)
       if (deltaTime < 16) {
         gameLoopRef.current = requestAnimationFrame(gameLoop);
         return;
@@ -210,30 +280,28 @@ function GameContent() {
 
       lastUpdateRef.current = now;
 
-      let { x, y, velocityY, isOnGround } = playerRef.current;
+      let { x, y, velocityY, isOnGround, lastDirection } = playerRef.current;
 
       // Horizontal movement
       if (keysPressed.current.left) {
         x -= MOVE_SPEED;
+        lastDirection = 'left';
       }
       if (keysPressed.current.right) {
         x += MOVE_SPEED;
+        lastDirection = 'right';
       }
 
-      // Keep player in bounds horizontally
-      x = Math.max(0, Math.min(GAME_WIDTH - PLAYER_SIZE, x));
+      x = Math.max(0, Math.min(MAP_WIDTH - PLAYER_SIZE, x));
 
       // Apply gravity
       velocityY += GRAVITY;
-
-      // Update vertical position
       y += velocityY;
 
-      // Check collision with platforms
+      // Collision detection
       const { collided, platform } = checkCollision(x, y, velocityY);
 
       if (collided && platform) {
-        // Land on platform
         y = platform.y - PLAYER_SIZE;
         velocityY = 0;
         isOnGround = true;
@@ -241,27 +309,56 @@ function GameContent() {
         isOnGround = false;
       }
 
-      // Keep player in bounds vertically
-      if (y > GAME_HEIGHT - PLAYER_SIZE) {
-        y = GAME_HEIGHT - PLAYER_SIZE;
+      if (y > MAP_HEIGHT - PLAYER_SIZE) {
+        y = MAP_HEIGHT - PLAYER_SIZE;
         velocityY = 0;
         isOnGround = true;
       }
 
       // Jump
-      if (keysPressed.current.up && isOnGround) {
+      if (keysPressed.current.jump && isOnGround) {
         velocityY = JUMP_STRENGTH;
         isOnGround = false;
       }
 
-      // Update ref
-      playerRef.current = { x, y, velocityY, isOnGround };
+      playerRef.current = { x, y, velocityY, isOnGround, lastDirection };
 
-      // Update Firebase (throttle to every 50ms using proper time check)
-      if (now - lastFirebaseUpdateRef.current >= 50) {
-        updatePlayerPosition(x, y, velocityY);
+      // Update camera
+      cameraRef.current.x = Math.max(0, Math.min(MAP_WIDTH - VIEWPORT_WIDTH, x - VIEWPORT_WIDTH / 2 + PLAYER_SIZE / 2));
+      cameraRef.current.y = Math.max(0, Math.min(MAP_HEIGHT - VIEWPORT_HEIGHT, y - VIEWPORT_HEIGHT / 2 + PLAYER_SIZE / 2));
+
+      // Only update Firebase if position changed significantly AND enough time passed
+      const distanceMoved = Math.sqrt(
+        Math.pow(x - lastSentPosition.current.x, 2) +
+        Math.pow(y - lastSentPosition.current.y, 2)
+      );
+
+      // Update every 1 second OR if moved more than 50 pixels
+      const shouldUpdate = (now - lastFirebaseUpdateRef.current >= 1000) || (distanceMoved > 50);
+
+      if (shouldUpdate) {
+        console.log('📤 Sending position update:', { x, y, lastDirection });
+        updatePlayerPosition(x, y, lastDirection);
         lastFirebaseUpdateRef.current = now;
+        lastSentPosition.current = { x, y };
       }
+
+      // Interpolate other players (log less frequently)
+      if (Math.random() < 0.01) { // Only log 1% of frames
+        console.log('🔄 Players in state:', Object.keys(players).length);
+      }
+
+      setPlayers((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach((id) => {
+          if (id !== playerIdRef.current) {
+            const player = updated[id];
+            player.renderX += (player.targetX - player.renderX) * INTERPOLATION_SPEED;
+            player.renderY += (player.targetY - player.renderY) * INTERPOLATION_SPEED;
+          }
+        });
+        return updated;
+      });
 
       gameLoopRef.current = requestAnimationFrame(gameLoop);
     };
@@ -275,7 +372,6 @@ function GameContent() {
     };
   }, [roomId, isClient]);
 
-  // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
@@ -285,7 +381,7 @@ function GameContent() {
         keysPressed.current.right = true;
       }
       if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ') {
-        keysPressed.current.up = true;
+        keysPressed.current.jump = true;
       }
     };
 
@@ -297,7 +393,7 @@ function GameContent() {
         keysPressed.current.right = false;
       }
       if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ') {
-        keysPressed.current.up = false;
+        keysPressed.current.jump = false;
       }
     };
 
@@ -310,16 +406,16 @@ function GameContent() {
     };
   }, []);
 
-  // Cleanup player on unmount
   useEffect(() => {
     return () => {
       if (playerIdRef.current) {
-        deleteDoc(doc(db, 'rooms', roomId, 'players', playerIdRef.current));
+        deleteDoc(doc(db, 'rooms', roomId, 'players', playerIdRef.current)).catch((e) => {
+          console.error('Error cleaning up player:', e);
+        });
       }
     };
   }, [roomId]);
 
-  // Don't render until client-side
   if (!isClient) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
@@ -337,23 +433,32 @@ function GameContent() {
             Room: <span className="text-white font-mono">{roomId}</span>
           </p>
           <p className="text-sm text-gray-400">
-            You: <span className="text-2xl">{playerEmojiRef.current}</span>
+            You: <span className="text-2xl">{playerEmojiRef.current}</span> ({playerIdRef.current.slice(0, 8)})
           </p>
           <p className="text-sm text-gray-400">
             Players online: <span className="text-white">{Object.keys(players).length}</span>
           </p>
+          <p className="text-sm text-gray-400">
+            Position: <span className="text-white">({Math.round(playerRef.current.x)}, {Math.round(playerRef.current.y)})</span>
+          </p>
+        </div>
+        <div className="mt-1 text-xs text-gray-500">
+          Players in state: {Object.keys(players).map(id => id.slice(0, 8)).join(', ') || 'NONE'}
+        </div>
+        <div className="mt-1 text-xs font-bold" style={{ color: Object.keys(players).length > 1 ? '#00ff00' : '#ff0000' }}>
+          {Object.keys(players).length > 1 ? '✅ MULTIPLAYER WORKING!' : '⚠️ Only you in room (invite someone!)'}
         </div>
         <p className="text-sm text-gray-400 mt-2">
-          Controls: Arrow Keys or WASD to move, Space/W/Up to jump
+          Controls: Arrow Keys/WASD to move, Space/W/Up to jump
         </p>
       </div>
 
       <div className="flex items-center justify-center p-8">
         <div
-          className="relative bg-sky-300"
+          className="relative bg-sky-400 overflow-hidden"
           style={{
-            width: `${GAME_WIDTH}px`,
-            height: `${GAME_HEIGHT}px`,
+            width: `${VIEWPORT_WIDTH}px`,
+            height: `${VIEWPORT_HEIGHT}px`,
           }}
         >
           {/* Platforms */}
@@ -362,36 +467,73 @@ function GameContent() {
               key={index}
               className="absolute bg-green-700 border-2 border-green-900"
               style={{
-                left: `${platform.x}px`,
-                top: `${platform.y}px`,
+                left: `${platform.x - cameraRef.current.x}px`,
+                top: `${platform.y - cameraRef.current.y}px`,
                 width: `${platform.width}px`,
                 height: `${platform.height}px`,
               }}
             />
           ))}
 
-          {/* All players including current player from Firebase */}
+          {/* Players */}
+          {Object.entries(players).length === 0 && (
+            <div className="absolute top-4 left-4 text-white bg-red-600 px-3 py-2 rounded">
+              ⚠️ No players in state!
+            </div>
+          )}
           {Object.entries(players).map(([id, player]) => {
             const isCurrentPlayer = id === playerIdRef.current;
+
+            // Use local position for current player, interpolated for others
+            let displayX, displayY;
+            if (isCurrentPlayer) {
+              displayX = playerRef.current.x;
+              displayY = playerRef.current.y;
+              console.log('🎯 Rendering current player at:', displayX, displayY);
+            } else {
+              displayX = player.renderX;
+              displayY = player.renderY;
+              console.log('👥 Rendering other player', id.slice(0, 8), 'at:', displayX, displayY);
+            }
+
+            const screenX = displayX - cameraRef.current.x;
+            const screenY = displayY - cameraRef.current.y;
+
+            console.log(`📍 Player ${id.slice(0, 8)} screen position:`, screenX, screenY, 'Camera:', cameraRef.current);
+
+            // Don't filter by screen bounds during debugging
+            // if (screenX < -100 || screenX > VIEWPORT_WIDTH + 100 ||
+            //     screenY < -100 || screenY > VIEWPORT_HEIGHT + 100) {
+            //   console.log(`🚫 Player ${id.slice(0, 8)} off screen, skipping render`);
+            //   return null;
+            // }
 
             return (
               <div
                 key={id}
-                className="absolute transition-all duration-100"
+                className="absolute"
                 style={{
-                  left: `${isCurrentPlayer ? playerRef.current.x : player.x}px`,
-                  top: `${isCurrentPlayer ? playerRef.current.y : player.y}px`,
+                  left: `${screenX}px`,
+                  top: `${screenY}px`,
                   width: `${PLAYER_SIZE}px`,
                   height: `${PLAYER_SIZE}px`,
+                  transform: `scaleX(${player.lastDirection === 'left' ? -1 : 1})`,
+                  zIndex: isCurrentPlayer ? 10 : 5,
                 }}
               >
                 <div
                   className={`w-full h-full rounded-lg flex items-center justify-center text-2xl shadow-lg ${
-                    isCurrentPlayer ? 'border-4 border-yellow-400' : 'border-2 border-gray-800'
+                    isCurrentPlayer ? 'border-4 border-yellow-400' : 'border-4 border-red-600'
                   }`}
                   style={{ backgroundColor: player.color }}
                 >
                   {player.emoji}
+                </div>
+                {/* Debug label for ALL players */}
+                <div className={`absolute -top-8 left-0 text-xs text-white px-1 rounded ${
+                  isCurrentPlayer ? 'bg-yellow-600' : 'bg-red-600'
+                }`}>
+                  {isCurrentPlayer ? 'YOU' : 'OTHER'}: {player.emoji} ({Math.round(displayX)}, {Math.round(displayY)})
                 </div>
               </div>
             );
