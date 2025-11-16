@@ -22,6 +22,7 @@ interface Player {
   lastDirection: 'left' | 'right';
   health?: number;
   isDead?: boolean;
+  isInvincible?: boolean;
 }
 
 interface InterpolatedPlayer extends Player {
@@ -76,6 +77,7 @@ const BULLET_SIZE = 8;
 const BULLET_LIFETIME = 5000; // 5 seconds
 const MAX_HEALTH = 3;
 const RESPAWN_TIME = 5000; // 5 seconds
+const INVINCIBILITY_TIME = 3000; // 3 seconds of invincibility after respawn
 
 // Platforms - bigger map with more platforms
 const PLATFORMS: Platform[] = [
@@ -515,17 +517,20 @@ function GameContent() {
       cameraRef.current.y = Math.max(0, Math.min(MAP_HEIGHT - VIEWPORT_HEIGHT, y - VIEWPORT_HEIGHT / 2 + PLAYER_SIZE / 2));
 
       // Send position updates via Socket.io (every 100ms or significant movement)
-      const distanceMoved = Math.sqrt(
-        Math.pow(x - lastSentPosition.current.x, 2) +
-        Math.pow(y - lastSentPosition.current.y, 2)
-      );
+      // Don't send updates while dead
+      if (!isDead) {
+        const distanceMoved = Math.sqrt(
+          Math.pow(x - lastSentPosition.current.x, 2) +
+          Math.pow(y - lastSentPosition.current.y, 2)
+        );
 
-      const shouldUpdate = (now - lastSocketUpdateRef.current >= 100) || (distanceMoved > 30);
+        const shouldUpdate = (now - lastSocketUpdateRef.current >= 100) || (distanceMoved > 30);
 
-      if (shouldUpdate) {
-        updatePlayerPosition(x, y, lastDirection);
-        lastSocketUpdateRef.current = now;
-        lastSentPosition.current = { x, y };
+        if (shouldUpdate) {
+          updatePlayerPosition(x, y, lastDirection);
+          lastSocketUpdateRef.current = now;
+          lastSentPosition.current = { x, y };
+        }
       }
 
       // Interpolate other players
@@ -725,11 +730,17 @@ function GameContent() {
                   height: `${PLAYER_SIZE}px`,
                   transform: `scaleX(${player.lastDirection === 'left' ? -1 : 1})`,
                   zIndex: isCurrentPlayer ? 10 : 5,
+                  filter: player.isDead ? 'grayscale(100%)' : 'none',
+                  opacity: player.isDead ? 0.5 : 1,
                 }}
               >
                 <div
                   className={`w-full h-full rounded-lg flex items-center justify-center text-2xl shadow-lg ${
-                    isCurrentPlayer ? 'border-4 border-yellow-400' : 'border-4 border-blue-600'
+                    player.isInvincible
+                      ? 'border-4 border-green-400 animate-pulse'
+                      : isCurrentPlayer
+                      ? 'border-4 border-yellow-400'
+                      : 'border-4 border-blue-600'
                   }`}
                   style={{ backgroundColor: player.color }}
                 >
@@ -737,9 +748,13 @@ function GameContent() {
                 </div>
                 {/* Label */}
                 <div className={`absolute -top-8 left-0 text-xs text-white px-1 rounded whitespace-nowrap ${
-                  isCurrentPlayer ? 'bg-yellow-600' : 'bg-blue-600'
+                  player.isInvincible
+                    ? 'bg-green-600'
+                    : isCurrentPlayer
+                    ? 'bg-yellow-600'
+                    : 'bg-blue-600'
                 }`}>
-                  {isCurrentPlayer ? 'YOU' : 'OTHER'}: {player.emoji}
+                  {player.isInvincible ? '🛡️ INVINCIBLE' : isCurrentPlayer ? 'YOU' : 'OTHER'}: {player.emoji}
                 </div>
               </div>
             );

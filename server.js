@@ -14,6 +14,7 @@ const handle = app.getRequestHandler();
 const rooms = new Map();
 const bullets = new Map(); // roomId -> Map of bulletId -> bullet
 const playerHealth = new Map(); // socketId -> health
+const playerInvincibility = new Map(); // socketId -> invincibility end timestamp
 const collisionCheckIntervals = new Map(); // roomId -> interval
 
 const MAX_HEALTH = 3;
@@ -22,6 +23,7 @@ const PLAYER_SIZE = 40;
 const BULLET_SIZE = 8;
 const BULLET_SPEED = 10;
 const COLLISION_CHECK_INTERVAL = 50; // Check every 50ms
+const INVINCIBILITY_TIME = 3000; // 3 seconds of invincibility after respawn
 
 app.prepare().then(() => {
   const httpServer = createServer(async (req, res) => {
@@ -62,6 +64,12 @@ app.prepare().then(() => {
       room.forEach((player, playerId) => {
         if (playerId === bullet.ownerId) return; // Can't hit yourself
         if (player.isDead) return; // Can't hit dead players
+
+        // Check if player is invincible
+        const invincibilityEnd = playerInvincibility.get(playerId);
+        if (invincibilityEnd && now < invincibilityEnd) {
+          return; // Player is invincible
+        }
 
         // Simple AABB collision detection
         if (
@@ -228,6 +236,10 @@ app.prepare().then(() => {
 
       playerHealth.set(socket.id, MAX_HEALTH);
 
+      // Set invincibility for 3 seconds after respawn
+      const invincibilityEnd = Date.now() + INVINCIBILITY_TIME;
+      playerInvincibility.set(socket.id, invincibilityEnd);
+
       const spawnX = 200;
       const spawnY = 900;
 
@@ -239,6 +251,7 @@ app.prepare().then(() => {
           playerData.y = spawnY;
           playerData.health = MAX_HEALTH;
           playerData.isDead = false;
+          playerData.isInvincible = true;
           room.set(socket.id, playerData);
         }
       }
@@ -258,7 +271,31 @@ app.prepare().then(() => {
         y: spawnY,
         health: MAX_HEALTH,
         isDead: false,
+        isInvincible: true,
       });
+
+      // Clear invincibility after timeout
+      setTimeout(() => {
+        playerInvincibility.delete(socket.id);
+        const room = rooms.get(roomId);
+        if (room) {
+          const playerData = room.get(socket.id);
+          if (playerData) {
+            playerData.isInvincible = false;
+            room.set(socket.id, playerData);
+
+            // Notify all players that invincibility has ended
+            socket.to(roomId).emit('player-updated', {
+              id: socket.id,
+              x: playerData.x,
+              y: playerData.y,
+              health: playerData.health,
+              isDead: false,
+              isInvincible: false,
+            });
+          }
+        }
+      }, INVINCIBILITY_TIME);
     });
 
     // Disconnect
